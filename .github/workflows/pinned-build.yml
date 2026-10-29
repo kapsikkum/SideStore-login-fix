@@ -1,0 +1,56 @@
+name: Pinned login-fix build
+
+# Manual build of SideStore PR #1683 at the commit that was audited.
+# Fails unless HEAD and the SideSign submodule are exactly the audited commits.
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build SideStore (pinned)
+    runs-on: xcode-27
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 2
+
+      - name: Verify audited commits
+        run: |
+          set -e
+          # HEAD is the audited PR commit plus this one workflow file, nothing else.
+          test "$(git rev-parse HEAD^)" = "4cfc076cca000a21bc830a3202b13b97f5a3c71b"
+          test "$(git diff --name-only HEAD^ HEAD)" = ".github/workflows/pinned-build.yml"
+          test "$(git -C Dependencies/SideSign rev-parse HEAD)" = "ac3df50c2e55a409b217eec7f14c8949f77365f1"
+          echo "pinned commits OK"
+
+      - run: brew install ldid xcbeautify
+
+      - name: Setup Env
+        run: |
+          MARKETING_VERSION=$(python3 scripts/ci/workflow.py get-marketing-version)
+          NORMALIZED_VERSION="${MARKETING_VERSION}-login-fix+4cfc076"
+          python3 scripts/ci/workflow.py set-marketing-version "$NORMALIZED_VERSION"
+          echo "MARKETING_VERSION=$NORMALIZED_VERSION" | tee -a $GITHUB_ENV
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1.6.0
+        with:
+          xcode-version: "27.2"
+
+      - name: Build
+        run: |
+          python3 scripts/ci/workflow.py build
+          mv SideStore.ipa SideStore-${{ env.MARKETING_VERSION }}.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SideStore-${{ env.MARKETING_VERSION }}.ipa
+          path: SideStore-${{ env.MARKETING_VERSION }}.ipa
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-logs
+          path: build/logs
