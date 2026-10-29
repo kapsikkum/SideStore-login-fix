@@ -1,0 +1,61 @@
+name: Pinned login-fix build
+
+# Manual build of LiveContainer's SideStore variant plus SideStore PR #1683 (audited commit).
+# Fails unless HEAD and the SideSign submodule are exactly the audited commits.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build SideStore (pinned)
+    runs-on: xcode-27
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 2
+
+      - name: Verify audited commits
+        run: |
+          set -e
+          # HEAD is the audited PR commit plus this one workflow file, nothing else.
+          test "$(git rev-parse HEAD^)" = "55f628d712400318064252a6564135d9bdfbf8c3"
+          test "$(git diff --name-only HEAD^ HEAD)" = ".github/workflows/pinned-build.yml"
+          test "$(git -C Dependencies/SideSign rev-parse HEAD)" = "ac3df50c2e55a409b217eec7f14c8949f77365f1"
+          echo "pinned commits OK"
+
+      - run: brew install ldid xcbeautify
+
+      - name: Setup Env
+        run: |
+          MARKETING_VERSION=$(python3 scripts/ci/workflow.py get-marketing-version)
+          NORMALIZED_VERSION="${MARKETING_VERSION}-lc-login-fix+55f628d"
+          python3 scripts/ci/workflow.py set-marketing-version "$NORMALIZED_VERSION"
+          echo "MARKETING_VERSION=$NORMALIZED_VERSION" | tee -a $GITHUB_ENV
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1.6.0
+        with:
+          xcode-version: "27.2"
+
+      - name: Build
+        run: |
+          python3 scripts/ci/workflow.py build
+
+      - name: Publish SideStore.ipa to a release in this repo
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha256 SideStore.ipa 2>/dev/null || shasum -a 256 SideStore.ipa
+          gh release delete lc-login-fix -y --cleanup-tag || true
+          gh release create lc-login-fix SideStore.ipa --title "SideStore (LiveContainer variant + login fix)" --notes "Built from 55f628d (LiveContainerSupport + SideStore PR 1683 at 4cfc076; SideSign ac3df50)." --prerelease
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-logs
+          path: build/logs
